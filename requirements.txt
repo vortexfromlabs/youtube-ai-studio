@@ -1,0 +1,39 @@
+# Core Framework
+fastapi==0.115.6
+uvicorn==0.34.0
+sqlalchemy==2.0.36
+streamlit==1.41.1
+python-dotenv==1.0.1
+pydantic==2.10.4
+httpx==0.28.1
+aiofiles==24.1.0
+
+# Agent 1 - Researcher
+duckduckgo-search==7.2.1
+google-genai==1.1.0
+
+# Agent 5 - Audio
+elevenlabs==1.50.0
+edge-tts==7.0.0
+
+# Agent 6 - Image Generation
+requests==2.32.3
+Pillow==11.1.0
+
+# Agent 7 - Background Removal
+rembg==2.0.62
+onnxruntime==1.20.1
+
+# Agent 8 - Animation / Agent 9 - Lip Sync / Agent 10 - Compositor
+ffmpeg-python==0.2.0
+numpy==2.2.1
+librosa==0.10.2.post1
+soundfile==0.13.1
+
+# Agent 11 - QA
+faster-whisper==1.1.1
+
+# Agent 12 - YouTube
+google-api-python-client==2.159.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0

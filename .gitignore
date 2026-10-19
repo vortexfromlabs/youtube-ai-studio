@@ -1,0 +1,17 @@
+# Environments
+.env
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Project specific
+workspace/
+vortex_pro.db
+*.mp4
+*.mp3
+*.wav
+*.jpg
+*.png
