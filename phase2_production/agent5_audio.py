@@ -3,11 +3,10 @@ Agent 5 — Audio Director
 ========================
 Generates dialogue audio.
 Primary: ElevenLabs.
-Fallback 1: edge-tts (Microsoft).
+Fallback 1: edge-tts via CLI (subprocess - fixes 403 websocket/asyncio issue).
 Fallback 2: gTTS (Google Free TTS - Indestructible).
 """
 
-import asyncio
 import logging
 import subprocess
 from pathlib import Path
@@ -19,10 +18,17 @@ from core.database import managed_session, Shot, Character, STATUS_COMPLETED, ST
 logger = logging.getLogger("vortex.agent5_audio")
 
 def _get_audio_duration(path: Path) -> float:
+    """Get audio duration using ffprobe derived from FFMPEG_PATH (handles blank env fix)."""
     try:
-        ffmpeg_cmd = settings.FFMPEG_PATH.replace("ffmpeg", "ffprobe") if settings.FFMPEG_PATH != "ffmpeg" else "ffprobe"
+        # FIXED: Use settings.FFMPEG_PATH which now safely defaults to "ffmpeg" even if env is ""
+        ffmpeg_path = settings.FFMPEG_PATH
+        # Derive ffprobe from ffmpeg path (e.g., /usr/bin/ffmpeg -> /usr/bin/ffprobe)
+        if ffmpeg_path != "ffmpeg" and "ffmpeg" in ffmpeg_path:
+            ffprobe_cmd = ffmpeg_path.replace("ffmpeg", "ffprobe")
+        else:
+            ffprobe_cmd = "ffprobe"
         result = subprocess.run(
-            [ffmpeg_cmd, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            [ffprobe_cmd, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
             capture_output=True, text=True, timeout=30,
         )
         return float(result.stdout.strip())
@@ -49,14 +55,31 @@ def _generate_elevenlabs(text: str, voice_id: str, output_path: Path) -> bool:
         return False
 
 def _generate_edge_tts(text: str, output_path: Path) -> bool:
+    """
+    FIXED: Use subprocess CLI instead of Python library to avoid 403 websocket + asyncio loop issues.
+    CLI is far more reliable: edge-tts --voice hi-IN-SwaraNeural --text "..." --write-media out.mp3
+    """
     try:
-        import edge_tts
-        async def _do_tts():
-            await edge_tts.Communicate(text, "hi-IN-SwaraNeural").save(str(output_path))
-        asyncio.run(_do_tts())
-        return output_path.exists() and output_path.stat().st_size > 0
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Use the CLI directly - no asyncio, no websockets in Python loop
+        result = subprocess.run(
+            ["edge-tts", "--voice", "hi-IN-SwaraNeural", "--text", text, "--write-media", str(output_path)],
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
+            logger.info(f"edge-tts CLI successfully generated audio: {output_path.name}")
+            return True
+        else:
+            logger.warning(f"edge-tts CLI failed (code {result.returncode}): {result.stderr[:500]}")
+            return False
+    except FileNotFoundError:
+        logger.warning("edge-tts CLI not found (pip install edge-tts). Trying gTTS fallback.")
+        return False
+    except subprocess.TimeoutExpired:
+        logger.warning("edge-tts CLI timed out after 60s")
+        return False
     except Exception as exc:
-        logger.warning(f"edge-tts fallback failed: {exc}")
+        logger.warning(f"edge-tts CLI fallback failed: {exc}")
         return False
 
 def _generate_gtts(text: str, output_path: Path) -> bool:
@@ -106,7 +129,7 @@ def run_audio_director(project_id: int) -> dict:
         output_path = get_workspace_path(project_id, settings.DIR_AUDIO, f"shot_{sdata['shot_number']:03d}.mp3")
         voice_id = voice_map.get(sdata["char"] or "", settings.ELEVENLABS_VOICE_ID)
 
-        # Try API Waterfall: ElevenLabs -> EdgeTTS -> gTTS
+        # Try API Waterfall: ElevenLabs -> EdgeTTS CLI -> gTTS
         success = _generate_elevenlabs(dialogue, voice_id, output_path)
         if not success:
             success = _generate_edge_tts(dialogue, output_path)
