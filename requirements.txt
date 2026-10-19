@@ -8,15 +8,16 @@ pydantic==2.10.4
 httpx==0.28.1
 aiofiles==24.1.0
 
-# Agent 1 - Researcher
+# Agent 1-4,12 - LLM Reasoning (100% FREE)
+groq==0.11.0
 duckduckgo-search==7.2.1
-google-genai==1.1.0
+ddgs==9.16.0
 
-# Agent 5 - Audio
-elevenlabs==1.50.0
+# Agent 5 - Audio (FREE)
 edge-tts==7.0.0
+gTTS==2.5.4
 
-# Agent 6 - Image Generation
+# Agent 6 - Image Generation (FREE - Pollinations.ai, no key needed)
 requests==2.32.3
 Pillow==11.1.0
 
@@ -30,7 +31,7 @@ numpy==2.2.1
 librosa==0.10.2.post1
 soundfile==0.13.1
 
-# Agent 11 - QA
+# Agent 11 - QA (FREE)
 faster-whisper==1.1.1
 
 # Agent 12 - YouTube
