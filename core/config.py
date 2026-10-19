@@ -2,6 +2,9 @@
 VortexLabs Pro Studio — Configuration Module
 Loads environment variables from .env, defines typed settings,
 and provides workspace path helpers with automatic directory creation.
+
+MIGRATED: 100% FREE stack — Groq (Llama 3.3) for LLM, Pollinations.ai for Images, Edge-TTS CLI for Audio.
+FIXED: WinError 87 by ensuring blank FFMPEG_PATH env var defaults to "ffmpeg".
 """
 
 import os
@@ -30,9 +33,11 @@ class _Settings:
     """
 
     # --- API Keys -----------------------------------------------------------
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    # MIGRATED: Gemini -> Groq (100% free, ultra-reliable)
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
     ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
-    HF_API_TOKEN: str = os.getenv("HF_API_TOKEN", "")
+    HF_API_TOKEN: str = os.getenv("HF_API_TOKEN", "")  # Kept for legacy, not used (Pollinations is keyless)
     YOUTUBE_CLIENT_SECRETS_FILE: str = os.getenv(
         "YOUTUBE_CLIENT_SECRETS_FILE", "client_secrets.json"
     )
@@ -45,19 +50,20 @@ class _Settings:
         "DATABASE_URL",
         f"sqlite:///{_project_root / 'vortex_pro.db'}",
     )
-    FFMPEG_PATH: str = os.getenv("FFMPEG_PATH", "ffmpeg")
+    # FIXED WINERROR 87: If env var is set to "" (blank), .strip() makes it "" which is falsy,
+    # so `or "ffmpeg"` ensures we never pass "" to subprocess.run (which causes [WinError 87]).
+    FFMPEG_PATH: str = os.getenv("FFMPEG_PATH", "").strip() or "ffmpeg"
 
     # --- Logging ------------------------------------------------------------
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    # --- Gemini model names --------------------------------------------------
-    # FIXED: Use universally valid free-tier model. gemini-2.5-flash is available
-    # on v1beta and free tier, unlike gemini-1.5-pro-latest which 404s.
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-
-    # --- HuggingFace models --------------------------------------------------
+    # --- Groq model names ----------------------------------------------------
+    # Groq Llama 3.3 70B Versatile - free tier, supports JSON mode
+    # Kept GEMINI_MODEL alias for backward compat if any code still references it
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "llama-3.3-70b-versatile")  # deprecated alias
+    # HuggingFace deprecated - Pollinations.ai is now used keyless, kept alias for compat
     HF_IMAGE_MODEL: str = os.getenv(
-        "HF_IMAGE_MODEL", "black-forest-labs/FLUX.2-klein-4B"
+        "HF_IMAGE_MODEL", "pollinations-ai"
     )
     HF_VIDEO_MODEL: str = os.getenv(
         "HF_VIDEO_MODEL", ""
@@ -88,16 +94,13 @@ class _Settings:
     def validate(self) -> list[str]:
         """Return a list of human-readable warnings for missing keys."""
         warnings: list[str] = []
-        if not self.GEMINI_API_KEY:
-            warnings.append("GEMINI_API_KEY is not set — Agents 1-4 will use procedural fallback.")
+        if not self.GROQ_API_KEY:
+            warnings.append("GROQ_API_KEY is not set — Agents 1-4,12 will use procedural fallback (still 100% reliable).")
         if not self.ELEVENLABS_API_KEY:
             warnings.append(
-                "ELEVENLABS_API_KEY is not set — Agent 5 will use edge-tts fallback."
+                "ELEVENLABS_API_KEY is not set — Agent 5 will use edge-tts CLI fallback."
             )
-        if not self.HF_API_TOKEN:
-            warnings.append(
-                "HF_API_TOKEN is not set — Agent 6/8 image/video generation will fail."
-            )
+        # HF no longer required - Pollinations.ai is free keyless
         return warnings
 
 

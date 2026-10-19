@@ -2,11 +2,12 @@
 Agent 1 — Researcher
 ====================
 Takes the raw user prompt, searches for 3 similar animated stories via
-DuckDuckGo, feeds them alongside the prompt to Gemini, and produces an
-AntiClicheBlueprint JSON that guarantees uniqueness.
+DuckDuckGo, feeds them alongside the prompt to Groq (Llama 3.3 70B), and
+produces an AntiClicheBlueprint JSON that guarantees uniqueness.
 
-BULLETPROOF: If Gemini fails (404, 429, 503, etc.) a complete procedural
-fallback blueprint is generated so the pipeline never crashes.
+MIGRATED: google-genai -> groq (100% free, ultra-reliable, JSON mode)
+BULLETPROOF: If Groq fails (429, 503, quota, network, etc.) a complete
+procedural fallback blueprint is generated so the pipeline never crashes.
 """
 
 import json
@@ -14,8 +15,7 @@ import logging
 import re
 from typing import Any
 
-from google import genai
-from google.genai import types as genai_types
+from groq import Groq
 from ddgs import DDGS
 
 from core.config import settings, get_workspace_path
@@ -51,15 +51,14 @@ def _search_competitors(query: str, max_results: int = 3) -> list[dict[str, str]
 
 
 # ---------------------------------------------------------------------------
-# Gemini system prompt for blueprint
+# Groq system prompt for blueprint
 # ---------------------------------------------------------------------------
 
-_BLUEPRINT_SYSTEM_PROMPT = """\
-You are a senior animation story consultant. You receive:
+_BLUEPRINT_SYSTEM_PROMPT = """You are a senior animation story consultant. You receive:
 1. A user's original story prompt.
 2. A list of existing similar animated stories found online.
 
-Your job is to produce an **AntiClicheBlueprint** — a JSON document that
+Your job is to produce an AntiClicheBlueprint — a JSON document that
 ensures the final animation is fresh and unique while honouring the user's
 exact request.
 
@@ -138,10 +137,10 @@ def _extract_names_from_prompt(prompt: str) -> list[str]:
 
 def _fallback_blueprint(user_prompt: str) -> dict[str, Any]:
     """
-    Generate a complete, valid procedural blueprint when Gemini fails.
+    Generate a complete, valid procedural blueprint when Groq fails.
     Always returns a dict that satisfies the blueprint schema.
     """
-    logger.warning("Using procedural fallback for Researcher blueprint (Gemini unavailable).")
+    logger.warning("Using procedural fallback for Researcher blueprint (Groq unavailable).")
     names = _extract_names_from_prompt(user_prompt)
     lower = user_prompt.lower()
 
@@ -190,8 +189,6 @@ def _fallback_blueprint(user_prompt: str) -> dict[str, Any]:
         name_lower = name.lower()
         for keyword, s in species_hints.items():
             if keyword in lower:
-                # If prompt says "fox named Luna" we want Luna=fox
-                # Simple heuristic: first name gets first matched species
                 if idx == 0 or keyword in name_lower or f"{keyword} named {name_lower}" in lower:
                     species = s
                     break
@@ -272,9 +269,7 @@ def _fallback_blueprint(user_prompt: str) -> dict[str, Any]:
     if len(title_candidate) < 10 or len(title_candidate.split()) < 2:
         title = f"The Adventure of {' and '.join(names)}"
     else:
-        # Title case and truncate
         title = title_candidate.title()
-        # Clean up trailing punctuation
         title = re.sub(r'[^\w\s]+$', '', title)
         if len(title) > 80:
             title = title[:77] + "..."
@@ -299,18 +294,15 @@ def _fallback_blueprint(user_prompt: str) -> dict[str, Any]:
 def _validate_and_repair_blueprint(blueprint: dict[str, Any], user_prompt: str) -> dict[str, Any]:
     """Ensure blueprint has all required fields, repairing with fallback if needed."""
     fallback = _fallback_blueprint(user_prompt)
-    # Check required top-level keys
     required_keys = ["title", "genre", "tone", "target_audience", "unique_selling_point", "themes", "characters", "locations", "plot_summary", "anti_cliche_notes"]
     for key in required_keys:
         if key not in blueprint or blueprint[key] is None or blueprint[key] == "":
             logger.warning("Blueprint missing key '%s', repairing from fallback.", key)
             blueprint[key] = fallback[key]
-    # Validate characters
     if not isinstance(blueprint.get("characters"), list) or len(blueprint["characters"]) == 0:
         logger.warning("Blueprint has no characters, repairing.")
         blueprint["characters"] = fallback["characters"]
     else:
-        # Ensure each character has required fields
         for idx, char in enumerate(blueprint["characters"]):
             if not isinstance(char, dict):
                 blueprint["characters"][idx] = fallback["characters"][idx % len(fallback["characters"])]
@@ -318,7 +310,6 @@ def _validate_and_repair_blueprint(blueprint: dict[str, Any], user_prompt: str) 
             for ckey in ["name", "species_or_type", "role", "personality_traits", "visual_style_notes", "voice_tone"]:
                 if ckey not in char or not char[ckey]:
                     char[ckey] = fallback["characters"][0].get(ckey, "unknown")
-    # Validate locations
     if not isinstance(blueprint.get("locations"), list) or len(blueprint["locations"]) == 0:
         logger.warning("Blueprint has no locations, repairing.")
         blueprint["locations"] = fallback["locations"]
@@ -330,31 +321,30 @@ def _validate_and_repair_blueprint(blueprint: dict[str, Any], user_prompt: str) 
             for lkey in ["name", "description", "mood"]:
                 if lkey not in loc or not loc[lkey]:
                     loc[lkey] = fallback["locations"][0].get(lkey, "unknown")
-    # Ensure themes is list
     if not isinstance(blueprint.get("themes"), list) or len(blueprint["themes"]) == 0:
         blueprint["themes"] = fallback["themes"]
-    # Ensure art_style exists for downstream
     if "art_style" not in blueprint:
         blueprint["art_style"] = fallback.get("art_style", "3D Pixar cartoon style")
     return blueprint
 
 
 # ---------------------------------------------------------------------------
-# Gemini call with bulletproof error handling
+# Groq call with bulletproof error handling + JSON mode
 # ---------------------------------------------------------------------------
 
-def _call_gemini_for_blueprint(
+def _call_groq_for_blueprint(
     user_prompt: str,
     competitor_data: list[dict[str, str]],
 ) -> dict[str, Any]:
     """
-    Call Gemini to generate the AntiClicheBlueprint JSON.
+    Call Groq (Llama 3.3) to generate the AntiClicheBlueprint JSON.
+    Uses response_format json_object to guarantee perfect JSON without cutoffs.
     Raises on any failure so caller can fallback.
     """
-    if not settings.GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY not set")
+    if not settings.GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY not set")
 
-    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    client = Groq(api_key=settings.GROQ_API_KEY)
 
     competitor_text = ""
     if competitor_data:
@@ -370,34 +360,30 @@ def _call_gemini_for_blueprint(
         f"EXISTING SIMILAR STORIES FOUND ONLINE:\n{competitor_text}"
     )
 
-    response = client.models.generate_content(
-        model=settings.GEMINI_MODEL,
-        contents=[user_message],
-        config=genai_types.GenerateContentConfig(
-            system_instruction=_BLUEPRINT_SYSTEM_PROMPT,
-            temperature=0.9,
-            max_output_tokens=4096,
-        ),
+    response = client.chat.completions.create(
+        model=settings.GROQ_MODEL,
+        messages=[
+            {"role": "system", "content": _BLUEPRINT_SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.9,
+        max_tokens=4096,
+        response_format={"type": "json_object"},
     )
 
-    if not response or not hasattr(response, "text") or not response.text:
-        raise ValueError("Gemini returned empty response for blueprint")
+    raw_text = response.choices[0].message.content
+    if not raw_text or not raw_text.strip():
+        raise ValueError("Groq returned empty response for blueprint")
 
-    raw_text = response.text.strip()
-    logger.debug("Gemini raw blueprint response length: %d chars", len(raw_text))
-
-    # Strip markdown code fences if present
-    cleaned = raw_text
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
+    raw_text = raw_text.strip()
+    logger.debug("Groq raw blueprint response length: %d chars", len(raw_text))
 
     try:
-        blueprint = json.loads(cleaned)
+        blueprint = json.loads(raw_text)
     except json.JSONDecodeError as exc:
         logger.error("Failed to parse blueprint JSON: %s", exc)
         logger.error("Raw text was: %s", raw_text[:2000])
-        raise ValueError(f"Gemini returned invalid JSON for blueprint: {exc}") from exc
+        raise ValueError(f"Groq returned invalid JSON for blueprint: {exc}") from exc
 
     return blueprint
 
@@ -409,58 +395,44 @@ def _call_gemini_for_blueprint(
 def run_researcher(project_id: int) -> dict[str, Any]:
     """
     Execute Agent 1 for the given project.
-    100% bulletproof: any Gemini error (404, 429, 503, etc.) results in
+    100% bulletproof: any Groq error (429, 503, etc.) results in
     procedural fallback blueprint, never crashes the pipeline.
-
-    1. Read the raw prompt from the database.
-    2. Search competitors via DuckDuckGo.
-    3. Call Gemini for the AntiClicheBlueprint (or fallback).
-    4. Persist the blueprint JSON back to the Project row and workspace.
-    5. Return the blueprint dict.
     """
     logger.info("Agent 1 (Researcher) starting for project %d", project_id)
 
-    # Load prompt inside managed_session - extract to plain string
     with managed_session() as db:
         project = db.query(Project).filter(Project.id == project_id).first()
         if project is None:
             raise ValueError(f"Project {project_id} not found in database.")
         raw_prompt = project.raw_prompt
-        # Update status safely inside session
         project.status = STATUS_IN_PROGRESS
 
     if not raw_prompt or not raw_prompt.strip():
         raw_prompt = "Create an animated adventure story about friendship and courage in a magical world."
 
-    # Step 1: competitor search (already bulletproof)
     logger.info("Searching for competitor animated stories…")
     competitors = _search_competitors(raw_prompt, max_results=3)
 
-    # Step 2: Gemini blueprint generation with comprehensive fallback
     blueprint: dict[str, Any] = {}
     try:
-        logger.info("Calling Gemini for AntiClicheBlueprint (model=%s)…", settings.GEMINI_MODEL)
-        blueprint = _call_gemini_for_blueprint(raw_prompt, competitors)
+        logger.info("Calling Groq for AntiClicheBlueprint (model=%s)…", settings.GROQ_MODEL)
+        blueprint = _call_groq_for_blueprint(raw_prompt, competitors)
         blueprint = _validate_and_repair_blueprint(blueprint, raw_prompt)
-        logger.info("Gemini blueprint succeeded.")
+        logger.info("Groq blueprint succeeded.")
     except Exception as exc:
-        # Catches 404 NOT_FOUND, 429 Quota Exceeded, 503, network errors, JSON errors, missing API key, etc.
         logger.error("Blueprint generation failed (%s). Using procedural fallback. Error: %s", type(exc).__name__, exc, exc_info=True)
         blueprint = _fallback_blueprint(raw_prompt)
 
-    # Ensure blueprint is valid dict with required fields
     if not isinstance(blueprint, dict) or not blueprint.get("characters"):
         logger.warning("Blueprint invalid after generation, forcing fallback.")
         blueprint = _fallback_blueprint(raw_prompt)
 
-    # Step 3: persist to DB
     blueprint_json_str = json.dumps(blueprint, indent=2, ensure_ascii=False)
     with managed_session() as db:
         project = db.query(Project).filter(Project.id == project_id).first()
         if project:
             project.anti_cliche_blueprint = blueprint_json_str
 
-    # Also persist to workspace file for debugging/traceability
     try:
         blueprint_path = get_workspace_path(project_id, settings.DIR_METADATA, "blueprint.json")
         blueprint_path.write_text(blueprint_json_str, encoding="utf-8")

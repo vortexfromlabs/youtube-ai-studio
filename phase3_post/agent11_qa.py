@@ -6,6 +6,9 @@ Compares the transcript against the original script dialogue.
 If dialogue is missing or significantly different, logs BugReports
 targeting Agent 5 (audio) or Agent 10 (compositing) and resets the
 affected Shot status to 'pending'.
+
+FIXED: All FFmpeg calls now use settings.FFMPEG_PATH which safely defaults to "ffmpeg"
+even when .env contains FFMPEG_PATH="" (previously caused [WinError 87]).
 """
 
 import logging
@@ -30,16 +33,22 @@ logger = logging.getLogger("vortex.agent11_qa")
 # Transcript extraction using faster-whisper
 # ---------------------------------------------------------------------------
 
+def _get_ffmpeg_cmd() -> str:
+    """Return the configured FFmpeg binary path - never empty (fixes WinError 87)."""
+    return settings.FFMPEG_PATH  # Guaranteed "ffmpeg" if env blank
+
+
 def _transcribe_video(video_path: Path) -> str:
     """
     Extract audio from video, transcribe using faster-whisper.
     Returns the full transcript text.
     """
-    # Extract audio to temp WAV
+    # Extract audio to temp WAV using fixed FFmpeg path
     tmp_wav = Path(tempfile.mktemp(suffix=".wav"))
     try:
+        ffmpeg_bin = _get_ffmpeg_cmd()
         cmd = [
-            settings.FFMPEG_PATH,
+            ffmpeg_bin,
             "-y",
             "-i", str(video_path),
             "-vn",

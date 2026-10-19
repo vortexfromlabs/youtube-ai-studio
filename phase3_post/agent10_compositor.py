@@ -9,11 +9,13 @@ Responsibilities
 3. Master-stitches all rendered shot clips into a final master video using
    FFmpeg's concat demuxer (-f concat -safe 0).
 4. Updates the Shot and Project records in the database.
+
+FIXED: All FFmpeg calls now use settings.FFMPEG_PATH which safely defaults to "ffmpeg"
+even when .env contains FFMPEG_PATH="" (previously caused [WinError 87]).
 """
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -32,8 +34,21 @@ logger = logging.getLogger("vortex.compositor")
 
 
 def _get_ffmpeg_cmd() -> str:
-    """Return the configured or default FFmpeg binary path."""
-    return settings.FFMPEG_PATH if settings.FFMPEG_PATH else "ffmpeg"
+    """
+    Return the configured FFmpeg binary path.
+    FIXED: settings.FFMPEG_PATH is now guaranteed to be "ffmpeg" even if .env is blank
+    via `os.getenv("FFMPEG_PATH", "").strip() or "ffmpeg"` in config.py.
+    No more [WinError 87] from passing "" to subprocess.
+    """
+    return settings.FFMPEG_PATH  # Already bulletproof: never ""
+
+
+def _get_ffprobe_cmd() -> str:
+    """Derive ffprobe from ffmpeg path, or default to ffprobe."""
+    ffmpeg = settings.FFMPEG_PATH
+    if ffmpeg != "ffmpeg" and "ffmpeg" in ffmpeg:
+        return ffmpeg.replace("ffmpeg", "ffprobe")
+    return "ffprobe"
 
 
 def _composite_single_shot(
@@ -144,7 +159,10 @@ def _stitch_master_video(shot_paths: List[Path], master_output_path: Path) -> bo
     ffmpeg_bin = _get_ffmpeg_cmd()
     concat_txt = master_output_path.parent / "concat_list.txt"
 
-    lines = [f"file '{p.resolve().as_posix().replace('\'', '\'\\\'\'')}'" for p in shot_paths]
+    lines = []
+    for p in shot_paths:
+        escaped = p.resolve().as_posix().replace("'", "'\\''")
+        lines.append(f"file '{escaped}'")
     concat_txt.write_text("\n".join(lines), encoding="utf-8")
 
     cmd = [

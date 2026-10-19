@@ -1,9 +1,11 @@
 """
 Agent 12 — YouTube Publisher
 =============================
-Generates SEO metadata (title, description, tags) using Gemini,
+Generates SEO metadata (title, description, tags) using Groq (Llama 3.3),
 then uses the Google YouTube Data API v3 to chunk-upload the final
 master video (safe for 20GB+ files via resumable upload).
+
+MIGRATED: google-genai -> groq (JSON mode, 100% reliable)
 """
 
 import json
@@ -12,17 +14,18 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
+from groq import Groq
+
 from core.config import settings, get_workspace_path, chunked_file_read
 from core.database import managed_session, Project, STATUS_COMPLETED
 
 logger = logging.getLogger("vortex.agent12_youtube")
 
 # ---------------------------------------------------------------------------
-# SEO metadata generation via Gemini
+# SEO metadata generation via Groq
 # ---------------------------------------------------------------------------
 
-_SEO_SYSTEM_PROMPT = """\
-You are a YouTube SEO expert for animated content. Given a story title,
+_SEO_SYSTEM_PROMPT = """You are a YouTube SEO expert for animated content. Given a story title,
 plot summary, and character names, generate optimised YouTube metadata.
 
 OUTPUT strictly valid JSON:
@@ -34,20 +37,20 @@ OUTPUT strictly valid JSON:
   "default_language": "en"
 }
 
-Return ONLY valid JSON.
-"""
+Return ONLY valid JSON."""
+
 
 
 def _generate_seo_metadata(
     title: str,
     blueprint: dict[str, Any],
 ) -> dict[str, Any]:
-    """Generate YouTube SEO metadata using Gemini."""
+    """Generate YouTube SEO metadata using Groq (JSON mode)."""
     try:
-        from google import genai
-        from google.genai import types as genai_types
+        if not settings.GROQ_API_KEY:
+            raise RuntimeError("GROQ_API_KEY not set")
 
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        client = Groq(api_key=settings.GROQ_API_KEY)
 
         characters_str = ", ".join(
             c.get("name", "") for c in blueprint.get("characters", [])
@@ -64,21 +67,22 @@ def _generate_seo_metadata(
             f"Plot: {plot}"
         )
 
-        response = client.models.generate_content(
-            model=settings.GEMINI_MODEL,
-            contents=[user_msg],
-            config=genai_types.GenerateContentConfig(
-                system_instruction=_SEO_SYSTEM_PROMPT,
-                temperature=0.7,
-                max_output_tokens=2048,
-            ),
+        response = client.chat.completions.create(
+            model=settings.GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": _SEO_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.7,
+            max_tokens=2048,
+            response_format={"type": "json_object"},
         )
 
-        raw = response.text.strip()
-        if raw.startswith("```"):
-            raw = re.sub(r"^```(?:json)?\s*", "", raw)
-            raw = re.sub(r"\s*```$", "", raw)
+        raw = response.choices[0].message.content
+        if not raw or not raw.strip():
+            raise ValueError("Groq returned empty SEO response")
 
+        raw = raw.strip()
         metadata = json.loads(raw)
         return metadata
 
@@ -86,8 +90,8 @@ def _generate_seo_metadata(
         logger.warning("SEO metadata generation failed: %s. Using defaults.", exc)
         return {
             "youtube_title": title[:100],
-            "youtube_description": f"Watch the animated story: {title}",
-            "tags": ["animation", "story", "animated short"],
+            "youtube_description": f"Watch the animated story: {title}\n\nA beautiful animated adventure featuring engaging characters and heartfelt storytelling. Perfect for families and animation lovers.\n\n#animation #story #animatedshort",
+            "tags": ["animation", "story", "animated short", "cartoon", "family", "adventure"],
             "category_id": "24",
             "default_language": "en",
         }
@@ -189,7 +193,7 @@ def _upload_to_youtube(
 def run_youtube_publisher(project_id: int, skip_upload: bool = False) -> dict:
     """
     Execute Agent 12:
-    1. Generate SEO metadata.
+    1. Generate SEO metadata via Groq.
     2. Upload to YouTube (unless skip_upload=True).
     3. Persist metadata and video ID.
     """
@@ -213,7 +217,7 @@ def run_youtube_publisher(project_id: int, skip_upload: bool = False) -> dict:
             blueprint = {}
 
     # Step 1: SEO metadata
-    logger.info("Generating YouTube SEO metadata…")
+    logger.info("Generating YouTube SEO metadata via Groq…")
     metadata = _generate_seo_metadata(title, blueprint)
     results["seo_generated"] = True
 
