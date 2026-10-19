@@ -51,7 +51,9 @@ class _Settings:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
     # --- Gemini model names --------------------------------------------------
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-pro-latest")
+    # FIXED: Use universally valid free-tier model. gemini-2.5-flash is available
+    # on v1beta and free tier, unlike gemini-1.5-pro-latest which 404s.
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     # --- HuggingFace models --------------------------------------------------
     HF_IMAGE_MODEL: str = os.getenv(
@@ -87,7 +89,7 @@ class _Settings:
         """Return a list of human-readable warnings for missing keys."""
         warnings: list[str] = []
         if not self.GEMINI_API_KEY:
-            warnings.append("GEMINI_API_KEY is not set — Agents 1-4 will fail.")
+            warnings.append("GEMINI_API_KEY is not set — Agents 1-4 will use procedural fallback.")
         if not self.ELEVENLABS_API_KEY:
             warnings.append(
                 "ELEVENLABS_API_KEY is not set — Agent 5 will use edge-tts fallback."
